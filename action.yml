@@ -1,0 +1,68 @@
+
+name: 'create-ecr-repo-action'
+description: 'Check and create an ecr repository if missing'
+inputs:
+  aws-role:
+    description: 'Aws role to apply changes'
+    required: true
+  registry:
+    description: 'Registry name'
+    required: true
+  pulling-accounts:
+    description: 'Accounts number separated by commas to allow cross account pull'
+    default: ''
+  retention-number:
+    description: 'Number of images to keep'
+    default: '5'
+runs:
+  using: 'composite'
+  steps:
+    - name: Check if registry exists
+      id: registry
+      shell: bash
+      env:
+        REPO_NAME: ${{ inputs.registry }}
+      run: |
+        registry=$(aws ecr describe-repositories --repository-names ${REPO_NAME} --query "repositories[].[repositoryName]" --output text --no-cli-pager 2>/dev/null) || echo ""
+        echo "registry=${registry}" >> $GITHUB_OUTPUT
+    - name: Create registry if missing
+      shell: bash
+      env:
+        REPO_NAME: ${{ inputs.registry }}
+      if: steps.registry.outputs.registry == ''
+      run: |
+        applicationid=$(basename "${REPO_NAME}")
+        aws ecr create-repository --repository-name ${REPO_NAME} --tags "[{\"Key\":\"ApplicationID\",\"Value\":\"${applicationid}\"},{\"Key\":\"Environment\",\"Value\":\"${ENVIRONMENT^}\"}]"
+    - name: Create registry lifecycle if missing
+      shell: bash
+      env:
+        REPO_NAME: ${{ inputs.registry }}
+        ENVIRONMENT: ${{ inputs.environment }}
+      if: steps.registry.outputs.registry == ''
+      run: |
+        retention=${{ inputs.retention-number }}
+        data=""
+        template=$(cat ${GITHUB_ACTION_PATH}/policy.json)
+        printf -v data "${template}" "${retention}" "${retention}"
+        aws ecr put-lifecycle-policy \
+            --repository-name ${REPO_NAME} \
+            --lifecycle-policy-text "$data"
+    - name: Create registry permission policy
+      shell: bash
+      env:
+        REPO_NAME: ${{ inputs.registry }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        ACCOUNTS: ${{ inputs.pulling-accounts }}
+      if: steps.registry.outputs.registry == '' && inputs.pulling-accounts != ''
+      run: |
+        data=""
+        values=""
+        accounts=$(echo $ACCOUNTS | tr "," "\n")
+        for account in $accounts; do
+            values="\"arn:aws:iam::${account}:root\",${values}"
+        done
+        template=$(cat ${GITHUB_ACTION_PATH}/permission.json)
+        printf -v data "${template}" "${values::-1}"
+        aws ecr set-repository-policy \
+            --repository-name ${REPO_NAME} \
+            --policy-text "$data"
