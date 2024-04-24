@@ -2,11 +2,8 @@
 name: 'create-ecr-repo-action'
 description: 'Check and create an ecr repository if missing'
 inputs:
-  aws-role:
-    description: 'Aws role to apply changes'
-    required: true
-  registry:
-    description: 'Registry name'
+  repository-name:
+    description: 'Repository name'
     required: true
   pulling-accounts:
     description: 'Accounts number separated by commas to allow cross account pull'
@@ -21,14 +18,14 @@ runs:
       id: registry
       shell: bash
       env:
-        REPO_NAME: ${{ inputs.registry }}
+        REPO_NAME: ${{ inputs.repository-name }}
       run: |
         registry=$(aws ecr describe-repositories --repository-names ${REPO_NAME} --query "repositories[].[repositoryName]" --output text --no-cli-pager 2>/dev/null) || echo ""
         echo "registry=${registry}" >> $GITHUB_OUTPUT
     - name: Create registry if missing
       shell: bash
       env:
-        REPO_NAME: ${{ inputs.registry }}
+        REPO_NAME: ${{ inputs.repository-name }}
       if: steps.registry.outputs.registry == ''
       run: |
         applicationid=$(basename "${REPO_NAME}")
@@ -36,21 +33,21 @@ runs:
     - name: Create registry lifecycle if missing
       shell: bash
       env:
-        REPO_NAME: ${{ inputs.registry }}
+        REPO_NAME: ${{ inputs.repository-name }}
         ENVIRONMENT: ${{ inputs.environment }}
+        RETENTION: ${{ inputs.retention-number }}
       if: steps.registry.outputs.registry == ''
       run: |
-        retention=${{ inputs.retention-number }}
         data=""
         template=$(cat ${GITHUB_ACTION_PATH}/policy.json)
-        printf -v data "${template}" "${retention}" "${retention}"
+        printf -v data "${template}" "${RETENTION}" "${RETENTION}"
         aws ecr put-lifecycle-policy \
             --repository-name ${REPO_NAME} \
             --lifecycle-policy-text "$data"
     - name: Create registry permission policy
       shell: bash
       env:
-        REPO_NAME: ${{ inputs.registry }}
+        REPO_NAME: ${{ inputs.repository-name }}
         ENVIRONMENT: ${{ inputs.environment }}
         ACCOUNTS: ${{ inputs.pulling-accounts }}
       if: steps.registry.outputs.registry == '' && inputs.pulling-accounts != ''
